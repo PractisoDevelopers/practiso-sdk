@@ -1,0 +1,23 @@
+{
+  "name": "@practiso/sdk",
+  "version": "1.0.0",
+  "description": "",
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
+  "files": [
+    "./lib/**/*"
+  ],
+  "scripts": {
+    "prepack": "tsc -p ./tsconfig.json",
+    "build": "tsc -p ./tsconfig.json",
+    "clean": "del-cli ./lib"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.12.1",
+  "devDependencies": {
+    "del-cli": "^6.0.0",
+    "typescript": "^5.8.3"
+  }
+}
