@@ -37,7 +37,6 @@
 
 		"outDir": "./lib",
 		"declaration": true,
-		"declarationDir": "./lib/types",
 	},
 	"exclude": ["test"],
 	"include": ["src/**/*.ts"]
