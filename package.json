@@ -10,17 +10,21 @@
   "scripts": {
     "prepack": "tsc -p ./tsconfig.json",
     "build": "tsc -p ./tsconfig.json",
-    "clean": "del-cli ./lib"
+    "clean": "del-cli ./lib",
+    "test": "vitest"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "packageManager": "pnpm@10.12.1",
   "devDependencies": {
+    "@types/node": "^24.0.3",
     "del-cli": "^6.0.0",
     "eslint-config-prettier": "^10.1.5",
+    "node-readable-stream": "^0.1.0",
     "prettier": "^3.5.3",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
   },
   "dependencies": {
     "domhandler": "^5.0.3",

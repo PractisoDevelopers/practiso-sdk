@@ -9,10 +9,11 @@ import {
     ResourceArchive,
 } from './model';
 import * as magic from './magic';
-import DomHandler, { ChildNode, Document, Element, isText } from 'domhandler';
+import DomHandler, { ChildNode, Document, Element, isDirective, isText } from 'domhandler';
 import { Parser } from 'htmlparser2';
 
 function allowElementOrEmptyText(value: ChildNode[]): Element[] {
+    const elements = []
     for (const [index, node] of value.entries()) {
         if (!(node instanceof Element)) {
             if (isText(node)) {
@@ -30,18 +31,20 @@ function allowElementOrEmptyText(value: ChildNode[]): Element[] {
                     index,
                 );
             }
+        } else {
+            elements.push(node)
         }
     }
-    return value as Element[];
+    return elements;
 }
 
 function firstElementChild(parent: Element): Element | null {
     for (const child of parent.children) {
         if (child instanceof Element) {
-            return child
+            return child;
         }
     }
-    return null
+    return null;
 }
 
 export async function parseStream(
@@ -63,6 +66,7 @@ export async function parseStream(
                     done: false,
                     value: blob.slice(terminatorIndex + 1),
                 };
+                xmlContent += await blob.slice(terminatorIndex).text()
                 break;
             } else {
                 xmlContent += await blob.text();
@@ -89,7 +93,7 @@ export async function parseStream(
 }
 
 function parseXmlObj(xmlDoc: Document): PractisoArchive {
-    const archive = allowElementOrEmptyText(xmlDoc.childNodes)[0];
+    const archive = allowElementOrEmptyText(xmlDoc.children.filter(n => !isDirective(n)))[0];
     if (archive?.tagName !== magic.archiveSerialName) {
         throw new ArchiveParseError(
             `missing <${magic.archiveSerialName}> as document element`,
@@ -264,7 +268,7 @@ function parseXmlFrame(xmlEle: Element): FrameArchive {
                     'unexpected manifold tag content',
                     null,
                     `<${magic.textFrameSerialName}>`,
-                )
+                );
             }
             return new Archive.Text(xmlEle.children[0].data);
         case magic.imageFrameSerialName:
@@ -371,7 +375,7 @@ function parseXmlDimension(xmlEle: Element): DimensionArchive {
         throw new ArchiveParseError('unexpected dimension of empty intensity');
     }
     const content = xmlEle.children[0];
-    if (xmlEle.children.length > 0 || !isText(content)) {
+    if (xmlEle.children.length > 1 || !isText(content)) {
         throw new ArchiveParseError('unexpected manifold dimension');
     }
     const intensity = parseFloat(content.data);
