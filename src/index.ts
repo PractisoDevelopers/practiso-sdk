@@ -9,11 +9,17 @@ import {
     ResourceArchive,
 } from './model';
 import * as magic from './magic';
-import DomHandler, { ChildNode, Document, Element, isDirective, isText } from 'domhandler';
+import DomHandler, {
+    ChildNode,
+    Document,
+    Element,
+    isDirective,
+    isText,
+} from 'domhandler';
 import { Parser } from 'htmlparser2';
 
 function allowElementOrEmptyText(value: ChildNode[]): Element[] {
-    const elements = []
+    const elements = [];
     for (const [index, node] of value.entries()) {
         if (!(node instanceof Element)) {
             if (isText(node)) {
@@ -32,7 +38,7 @@ function allowElementOrEmptyText(value: ChildNode[]): Element[] {
                 );
             }
         } else {
-            elements.push(node)
+            elements.push(node);
         }
     }
     return elements;
@@ -51,49 +57,45 @@ export async function parseStream(
     stream: ReadableStream<Blob | Uint8Array>,
 ): Promise<PractisoArchive> {
     const reader = stream.getReader();
-    try {
-        let read = await reader.read();
-        let xmlContent = '';
-        while (!read.done) {
-            const blob =
-                read.value instanceof Blob
-                    ? read.value
-                    : new Blob([read.value]);
-            const buffer = await blob.bytes();
-            const terminatorIndex = buffer.indexOf(0);
-            if (terminatorIndex >= 0) {
-                read = {
-                    done: false,
-                    value: blob.slice(terminatorIndex + 1),
-                };
-                xmlContent += await blob.slice(terminatorIndex).text()
-                break;
-            } else {
-                xmlContent += await blob.text();
-            }
-
-            read = await reader.read();
+    let read = await reader.read();
+    let xmlContent = '';
+    while (!read.done) {
+        const blob =
+            read.value instanceof Blob ? read.value : new Blob([read.value]);
+        const buffer = await blob.bytes();
+        const terminatorIndex = buffer.indexOf(0);
+        if (terminatorIndex >= 0) {
+            read = {
+                done: false,
+                value: blob.slice(terminatorIndex + 1),
+            };
+            xmlContent += await blob.slice(terminatorIndex).text();
+            break;
+        } else {
+            xmlContent += await blob.text();
         }
 
-        const domHandler = new DomHandler();
-        const xml = new Parser(domHandler);
-        xml.write(xmlContent);
-        const archive = parseXmlObj(domHandler.root);
-
-        const resourceBlocks = new Array<BlobPart>();
-        while (!read.done) {
-            resourceBlocks.push(read.value);
-            read = await reader.read();
-        }
-        archive.resources = await parseResources(new Blob(resourceBlocks));
-        return archive;
-    } finally {
-        await reader.cancel();
+        read = await reader.read();
     }
+
+    const domHandler = new DomHandler();
+    const xml = new Parser(domHandler);
+    xml.write(xmlContent);
+    const archive = parseXmlObj(domHandler.root);
+
+    const resourceBlocks = new Array<BlobPart>();
+    while (!read.done) {
+        resourceBlocks.push(read.value);
+        read = await reader.read();
+    }
+    archive.resources = await parseResources(new Blob(resourceBlocks));
+    return archive;
 }
 
 function parseXmlObj(xmlDoc: Document): PractisoArchive {
-    const archive = allowElementOrEmptyText(xmlDoc.children.filter(n => !isDirective(n)))[0];
+    const archive = allowElementOrEmptyText(
+        xmlDoc.children.filter((n) => !isDirective(n)),
+    )[0];
     if (archive?.tagName !== magic.archiveSerialName) {
         throw new ArchiveParseError(
             `missing <${magic.archiveSerialName}> as document element`,
