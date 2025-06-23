@@ -21,5 +21,9 @@
     "eslint-config-prettier": "^10.1.5",
     "prettier": "^3.5.3",
     "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "domhandler": "^5.0.3",
+    "htmlparser2": "^10.0.0"
   }
 }

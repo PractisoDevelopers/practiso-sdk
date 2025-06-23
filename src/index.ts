@@ -9,21 +9,23 @@ import {
     ResourceArchive,
 } from './model';
 import * as magic from './magic';
+import DomHandler, { ChildNode, Document, Element, isText } from 'domhandler';
+import { Parser } from 'htmlparser2';
 
 function allowElementOrEmptyText(value: ChildNode[]): Element[] {
     for (const [index, node] of value.entries()) {
         if (!(node instanceof Element)) {
-            if (node instanceof Text) {
-                if (node.wholeText.trim().length > 0) {
+            if (isText(node)) {
+                if (node.data.trim().length > 0) {
                     throw new ArchiveParseError(
-                        `unexpected text "${node.textContent}"`,
+                        `unexpected text "${node.data}"`,
                         null,
                         index,
                     );
                 }
             } else {
                 throw new ArchiveParseError(
-                    `unexpected element ${node.nodeName}`,
+                    `unexpected element ${node.type}`,
                     null,
                     index,
                 );
@@ -31,6 +33,15 @@ function allowElementOrEmptyText(value: ChildNode[]): Element[] {
         }
     }
     return value as Element[];
+}
+
+function firstElementChild(parent: Element): Element | null {
+    for (const child of parent.children) {
+        if (child instanceof Element) {
+            return child
+        }
+    }
+    return null
 }
 
 export async function parseStream(
@@ -60,9 +71,10 @@ export async function parseStream(
             read = await reader.read();
         }
 
-        const xml = new DOMParser();
-        const archiveDoc = xml.parseFromString(xmlContent, 'application/xml');
-        const archive = parseXmlObj(archiveDoc);
+        const domHandler = new DomHandler();
+        const xml = new Parser(domHandler);
+        xml.write(xmlContent);
+        const archive = parseXmlObj(domHandler.root);
 
         const resourceBlocks = new Array<BlobPart>();
         while (!read.done) {
@@ -77,23 +89,23 @@ export async function parseStream(
 }
 
 function parseXmlObj(xmlDoc: Document): PractisoArchive {
-    const archive = xmlDoc.documentElement;
-    if (archive?.localName !== magic.archiveSerialName) {
+    const archive = allowElementOrEmptyText(xmlDoc.childNodes)[0];
+    if (archive?.tagName !== magic.archiveSerialName) {
         throw new ArchiveParseError(
             `missing <${magic.archiveSerialName}> as document element`,
         );
     }
 
-    if (archive.namespaceURI && archive.namespaceURI != magic.namespace) {
+    if (archive.namespace && archive.namespace != magic.namespace) {
         throw new ArchiveParseError(
-            `unexpected xml namespace: ${archive.lookupNamespaceURI('')}`,
+            `unexpected xml namespace: ${archive.namespace}`,
             null,
             `<${magic.archiveSerialName}>`,
         );
     }
 
     const creation = (() => {
-        const str = archive.getAttribute('creation');
+        const str = archive.attribs['creation'];
         if (!str) {
             throw new ArchiveParseError(
                 'missing attribute "creation"',
@@ -104,9 +116,9 @@ function parseXmlObj(xmlDoc: Document): PractisoArchive {
         return Date.parse(str);
     })();
 
-    let elements: Element[];
+    let elements: (typeof archive)[];
     try {
-        elements = allowElementOrEmptyText(Array.from(archive.childNodes));
+        elements = allowElementOrEmptyText(Array.from(archive.children));
     } catch (e) {
         if (e instanceof ArchiveParseError) {
             throw new ArchiveParseError(
@@ -120,9 +132,9 @@ function parseXmlObj(xmlDoc: Document): PractisoArchive {
     }
     const quizzes = elements
         .map((quiz, index) => {
-            const name = quiz.getAttribute('name'),
-                quizCreationStr = quiz.getAttribute('creation'),
-                quizModificationStr = quiz.getAttribute('modification');
+            const name = quiz.attribs['name'],
+                quizCreationStr = quiz.attribs['creation'],
+                quizModificationStr = quiz.attribs['modification'];
             if (name == null) {
                 throw new ArchiveParseError(
                     `missing name attribute`,
@@ -140,9 +152,11 @@ function parseXmlObj(xmlDoc: Document): PractisoArchive {
                 );
             }
 
-            const framesElements = Array.from(
-                quiz.getElementsByClassName(magic.framesSerialName),
-            );
+            const framesElements = quiz.children.filter(
+                (c) =>
+                    c instanceof Element &&
+                    c.tagName === magic.framesSerialName,
+            ) as Element[];
             if (framesElements.length <= 0) {
                 throw new ArchiveParseError(
                     `missing <${magic.framesSerialName}>`,
@@ -159,29 +173,33 @@ function parseXmlObj(xmlDoc: Document): PractisoArchive {
                     `<${magic.quizSerialName}#${index}>`,
                 );
             }
-            const dimensions = Array.from(
-                quiz.getElementsByClassName(magic.dimensionSerialName),
-            ).map((ele, dIndex) => {
-                try {
-                    return parseXmlDimension(ele);
-                } catch (e) {
-                    if (e instanceof ArchiveParseError) {
-                        throw new ArchiveParseError(
-                            e.message,
-                            e,
-                            `<${magic.archiveSerialName}>`,
-                            `<${magic.quizSerialName}#${index}>`,
-                            `<${magic.dimensionSerialName}#${dIndex}>`,
-                            ...e.location,
-                        );
-                    } else {
-                        throw e;
+            const dimensions = quiz.children
+                .filter(
+                    (c) =>
+                        c instanceof Element &&
+                        c.tagName === magic.dimensionSerialName,
+                )
+                .map((ele, dIndex) => {
+                    try {
+                        return parseXmlDimension(ele as Element);
+                    } catch (e) {
+                        if (e instanceof ArchiveParseError) {
+                            throw new ArchiveParseError(
+                                e.message,
+                                e,
+                                `<${magic.archiveSerialName}>`,
+                                `<${magic.quizSerialName}#${index}>`,
+                                `<${magic.dimensionSerialName}#${dIndex}>`,
+                                ...e.location,
+                            );
+                        } else {
+                            throw e;
+                        }
                     }
-                }
-            });
+                });
 
             const frames = allowElementOrEmptyText(
-                framesElements.flatMap((f) => Array.from(f.children)),
+                framesElements[0].children,
             ).map((ele, fIndex) => {
                 try {
                     return parseXmlFrame(ele);
@@ -232,21 +250,28 @@ async function parseResources(blob: Blob): Promise<ResourceArchive> {
 }
 
 function parseXmlFrame(xmlEle: Element): FrameArchive {
-    switch (xmlEle.localName) {
+    switch (xmlEle.tagName) {
         case magic.textFrameSerialName:
-            if (!xmlEle.textContent) {
+            if (!xmlEle.children) {
                 throw new ArchiveParseError(
                     'unexpected empty text content',
                     null,
                     `<${magic.textFrameSerialName}>`,
                 );
             }
-            return new Archive.Text(xmlEle.textContent);
+            if (xmlEle.children.length > 1 || !isText(xmlEle.children[0])) {
+                throw new ArchiveParseError(
+                    'unexpected manifold tag content',
+                    null,
+                    `<${magic.textFrameSerialName}>`,
+                )
+            }
+            return new Archive.Text(xmlEle.children[0].data);
         case magic.imageFrameSerialName:
-            const width = xmlEle.getAttribute('width'),
-                height = xmlEle.getAttribute('height'),
-                alt = xmlEle.getAttribute('alt'),
-                src = xmlEle.getAttribute('src');
+            const width = xmlEle.attribs['width'],
+                height = xmlEle.attribs['height'],
+                alt = xmlEle.attribs['alt'],
+                src = xmlEle.attribs['src'];
             if (!width || !height) {
                 throw new ArchiveParseError(
                     'unexpected image of unknown size',
@@ -271,31 +296,31 @@ function parseXmlFrame(xmlEle: Element): FrameArchive {
             const items = allowElementOrEmptyText(
                 Array.from(xmlEle.childNodes),
             ).map((itemEle, index) => {
-                if (itemEle.localName !== 'item') {
+                if (itemEle.tagName !== 'item') {
                     throw new ArchiveParseError(
                         `unexpected node, only <item> expected`,
                         null,
                         `<${magic.optionsFrameSerialName}>`,
                         index,
-                        `<${itemEle.nodeName}>`,
+                        `<${itemEle.tagName}>`,
                     );
                 }
-                const innerEle = itemEle.firstElementChild;
+                const innerEle = firstElementChild(itemEle);
                 if (!innerEle) {
                     throw new ArchiveParseError(
                         `empty item`,
                         null,
                         `<${magic.optionsFrameSerialName}>`,
-                        `<${itemEle.nodeName}#${index}>`,
+                        `<${itemEle.tagName}#${index}>`,
                     );
                 }
-                const priorityStr = itemEle.getAttribute('priority');
+                const priorityStr = itemEle.attribs['priority'];
                 if (!priorityStr) {
                     throw new ArchiveParseError(
                         'missing priority attribute',
                         null,
                         `<${magic.optionsFrameSerialName}>`,
-                        `<${itemEle.nodeName}#${index}>`,
+                        `<${itemEle.tagName}#${index}>`,
                     );
                 }
                 const priority = parseInt(priorityStr);
@@ -304,10 +329,10 @@ function parseXmlFrame(xmlEle: Element): FrameArchive {
                         `unexpected priority value ${priorityStr}`,
                         null,
                         `<${magic.optionsFrameSerialName}>`,
-                        `<${itemEle.nodeName}#${index}>`,
+                        `<${itemEle.tagName}#${index}>`,
                     );
                 }
-                const isKey = itemEle.getAttribute('key') === 'true';
+                const isKey = itemEle.attribs['key'] === 'true';
 
                 let innerFrame: FrameArchive;
                 try {
@@ -318,45 +343,49 @@ function parseXmlFrame(xmlEle: Element): FrameArchive {
                             e.message,
                             e,
                             `<${magic.optionsFrameSerialName}>`,
-                            `<${itemEle.nodeName}#${index}>`,
-                            ...e.location
-                        )
+                            `<${itemEle.tagName}#${index}>`,
+                            ...e.location,
+                        );
                     }
-                    throw e
+                    throw e;
                 }
                 return new Archive.Option(isKey, priority, innerFrame);
             });
-            const name = xmlEle.getAttribute('name');
+            const name = xmlEle.attribs['name'];
             return new Archive.Options(name, items);
         default:
             throw new ArchiveParseError(
                 'unexpected frame type',
                 null,
-                `<${xmlEle.nodeName}>`,
+                `<${xmlEle.tagName}>`,
             );
     }
 }
 
 function parseXmlDimension(xmlEle: Element): DimensionArchive {
-    const name = xmlEle.getAttribute('name')
+    const name = xmlEle.attribs['name'];
     if (!name) {
-        throw new ArchiveParseError('missing name attribute')
+        throw new ArchiveParseError('missing name attribute');
     }
-    if (!xmlEle.textContent) {
-        throw new ArchiveParseError('unexpected dimension of empty intensity')
+    if (!xmlEle.children) {
+        throw new ArchiveParseError('unexpected dimension of empty intensity');
     }
-    const intensity = parseFloat(xmlEle.textContent)
+    const content = xmlEle.children[0];
+    if (xmlEle.children.length > 0 || !isText(content)) {
+        throw new ArchiveParseError('unexpected manifold dimension');
+    }
+    const intensity = parseFloat(content.data);
     if (Number.isNaN(intensity)) {
-        throw new ArchiveParseError(`unexpected intensity of ${xmlEle.textContent}`)
+        throw new ArchiveParseError(`unexpected intensity of ${content.data}`);
     }
     try {
-        return new DimensionArchive(name, intensity)
+        return new DimensionArchive(name, intensity);
     } catch (e) {
         if (e instanceof RangeError) {
-            throw new ArchiveParseError(e.message, e)
+            throw new ArchiveParseError(e.message, e);
         }
-        throw e
+        throw e;
     }
 }
 
-export { model };
+export { model, Archive, ArchiveParseError };
