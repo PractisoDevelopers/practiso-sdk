@@ -80,6 +80,10 @@ export class ResourceArchive {
         return this.source.size
     }
 
+    keys() {
+        return this.source.keys()
+    }
+
     [Symbol.iterator]() {
         return this.source[Symbol.iterator]();
     }
