@@ -69,7 +69,8 @@ export class Parser {
                     case 'xml':
                         const terminatorIndex = buffer.indexOf(0);
                         if (terminatorIndex >= 0) {
-                            this.xmlParts.push(blob.slice(terminatorIndex));
+                            this.xmlParts.push(blob.slice(0, terminatorIndex));
+                            this.resourceParts.push(blob.slice(terminatorIndex + 1))
                             readHead = 'resource';
                         } else {
                             this.xmlParts.push(blob);
