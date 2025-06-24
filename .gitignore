@@ -4,3 +4,4 @@
 
 # reterive via tsc
 lib
+node_modules
