@@ -16,7 +16,7 @@ import DomHandler, {
     isDirective,
     isText,
 } from 'domhandler';
-import { Parser } from 'htmlparser2';
+import { Parser as XmlParser } from 'htmlparser2';
 
 function allowElementOrEmptyText(value: ChildNode[]): Element[] {
     const elements = [];
@@ -53,43 +53,48 @@ function firstElementChild(parent: Element): Element | null {
     return null;
 }
 
-export async function parseStream(
-    stream: ReadableStream<Blob | Uint8Array>,
-): Promise<PractisoArchive> {
-    const reader = stream.getReader();
-    let read = await reader.read();
-    let xmlContent = '';
-    while (!read.done) {
-        const blob =
-            read.value instanceof Blob ? read.value : new Blob([read.value]);
-        const buffer = await blob.bytes();
-        const terminatorIndex = buffer.indexOf(0);
-        if (terminatorIndex >= 0) {
-            read = {
-                done: false,
-                value: blob.slice(terminatorIndex + 1),
-            };
-            xmlContent += await blob.slice(terminatorIndex).text();
-            break;
-        } else {
-            xmlContent += await blob.text();
-        }
+export class Parser {
+    readonly sink: WritableStream;
+    private readonly xmlParts = new Array<BlobPart>();
+    private readonly resourceParts = new Array<BlobPart>();
 
-        read = await reader.read();
+    constructor() {
+        let readHead: 'xml' | 'resource' = 'xml';
+
+        this.sink = new WritableStream<ArrayBufferLike>({
+            write: async (chunk) => {
+                const blob = chunk instanceof Blob ? chunk : new Blob([chunk]);
+                const buffer = await blob.bytes();
+                switch (readHead) {
+                    case 'xml':
+                        const terminatorIndex = buffer.indexOf(0);
+                        if (terminatorIndex >= 0) {
+                            this.xmlParts.push(blob.slice(terminatorIndex));
+                            readHead = 'resource';
+                        } else {
+                            this.xmlParts.push(blob);
+                        }
+                        break;
+                    case 'resource':
+                        this.resourceParts.push(blob);
+                        break;
+                }
+            },
+        });
     }
 
-    const domHandler = new DomHandler();
-    const xml = new Parser(domHandler);
-    xml.write(xmlContent);
-    const archive = parseXmlObj(domHandler.root);
+    async result() {
+        const xmlContent = await new Blob(this.xmlParts).text()
 
-    const resourceBlocks = new Array<BlobPart>();
-    while (!read.done) {
-        resourceBlocks.push(read.value);
-        read = await reader.read();
+        const domHandler = new DomHandler();
+        const xml = new XmlParser(domHandler);
+        xml.write(xmlContent);
+
+        const archive = parseXmlObj(domHandler.root);
+        archive.resources = await parseResources(new Blob(this.resourceParts));
+
+        return archive
     }
-    archive.resources = await parseResources(new Blob(resourceBlocks));
-    return archive;
 }
 
 function parseXmlObj(xmlDoc: Document): PractisoArchive {
