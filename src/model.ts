@@ -76,6 +76,10 @@ export class ResourceArchive {
         return removed;
     }
 
+    get size() {
+        return this.source.size
+    }
+
     [Symbol.iterator]() {
         return this.source[Symbol.iterator]();
     }
