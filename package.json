@@ -16,9 +16,10 @@
     "clean": "del-cli ./lib",
     "test": "vitest"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": ["Practiso", "parser", "data manipulation"],
+  "repository": "https://github.com/PractisoDevelopers/practiso-sdk",
+  "author": "Practiso Developers",
+  "license": "Apache-2.0",
   "packageManager": "pnpm@10.12.1",
   "devDependencies": {
     "@types/node": "^24.0.3",
