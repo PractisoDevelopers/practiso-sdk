@@ -1,4 +1,6 @@
 import { readAllFromStream } from './helper';
+import { Element, Text as XmlText } from 'domhandler';
+import { namespace } from './magic';
 
 export class QuizArchive {
     name: string;
@@ -9,16 +11,39 @@ export class QuizArchive {
 
     constructor(
         name: string,
-        creationTime?: Date,
-        modificationTime?: Date,
-        frames: FrameArchive[] = [],
-        dimensions: DimensionArchive[] = [],
+        args?: {
+            creationTime?: Date;
+            modificationTime?: Date;
+            frames?: FrameArchive[];
+            dimensions?: DimensionArchive[];
+        },
     ) {
         this.name = name;
-        this.creationTime = creationTime ?? new Date();
-        this.modificationTime = modificationTime;
-        this.frames = frames;
-        this.dimensions = dimensions;
+        this.creationTime = args?.creationTime ?? new Date();
+        this.modificationTime = args?.modificationTime;
+        this.frames = args?.frames ?? [];
+        this.dimensions = args?.dimensions ?? [];
+    }
+
+    toXmlElement() {
+        return new Element(
+            'quiz',
+            {
+                name: this.name,
+                creation: this.creationTime.toISOString(),
+                ...(this.modificationTime
+                    ? { modification: this.modificationTime.toISOString() }
+                    : {}),
+            },
+            [
+                new Element(
+                    'frames',
+                    {},
+                    this.frames.map((f) => f.toXmlElement()),
+                ),
+                ...this.dimensions.map((d) => d.toXmlElement()),
+            ],
+        );
     }
 }
 
@@ -28,13 +53,27 @@ export class PractisoArchive {
     resources: ResourceArchive;
 
     constructor(
-        creationTime?: Date,
         content: QuizArchive[] = [],
-        resources: ResourceArchive = new ResourceArchive(),
+        args?: {
+            creationTime?: Date;
+            resources?: ResourceArchive;
+        },
     ) {
-        this.creationTime = creationTime ?? new Date();
+        this.creationTime = args?.creationTime ?? new Date();
         this.content = content;
-        this.resources = resources;
+        this.resources = args?.resources ?? new ResourceArchive();
+    }
+
+    toXmlElement() {
+        const ele = new Element(
+            'archive',
+            {
+                creation: this.creationTime.toISOString(),
+            },
+            this.content.map((quiz) => quiz.toXmlElement()),
+        );
+        ele.namespace = namespace;
+        return ele;
     }
 }
 
@@ -70,6 +109,31 @@ export class ResourceArchive {
         }
     }
 
+    put(
+        name: string,
+        futureBytes:
+            | (() => Promise<BlobPart[] | Blob>)
+            | Promise<BlobPart[] | Blob>
+            | BlobPart[]
+            | Blob,
+    ) {
+        function reduce(bytesLike: BlobPart[] | Blob) {
+            if (bytesLike instanceof Blob) {
+                return bytesLike;
+            } else {
+                return new Blob(bytesLike);
+            }
+        }
+
+        if (futureBytes instanceof Promise) {
+            this.source.set(name, () => futureBytes.then(reduce));
+        } else if (typeof futureBytes === 'function') {
+            this.source.set(name, () => futureBytes().then(reduce));
+        } else {
+            this.source.set(name, async () => reduce(futureBytes));
+        }
+    }
+
     remove(name: string): (() => Promise<Blob>) | undefined {
         const removed = this.source.get(name);
         this.source.delete(name);
@@ -77,20 +141,25 @@ export class ResourceArchive {
     }
 
     get size() {
-        return this.source.size
+        return this.source.size;
     }
 
     keys() {
-        return this.source.keys()
+        return this.source.keys();
     }
 
-    [Symbol.iterator]() {
-        return this.source[Symbol.iterator]();
+    async *[Symbol.asyncIterator](): AsyncGenerator<[string, Blob]> {
+        for (const [name, generator] of this.source) {
+            const content = await generator();
+            yield [name, content];
+        }
     }
 }
 
 export interface FrameArchive {
     name: string | null;
+
+    toXmlElement(): Element;
 }
 
 export namespace Archive {
@@ -103,6 +172,10 @@ export namespace Archive {
 
         get name() {
             return null;
+        }
+
+        toXmlElement(): Element {
+            return new Element('text', {}, [new XmlText(this.content)]);
         }
     }
 
@@ -127,6 +200,15 @@ export namespace Archive {
         get name() {
             return this.altText;
         }
+
+        toXmlElement(): Element {
+            return new Element('image', {
+                src: this.filename,
+                width: this.width.toString(),
+                height: this.height.toString(),
+                ...(this.altText ? { alt: this.altText } : {}),
+            });
+        }
     }
 
     export class Options implements FrameArchive {
@@ -137,6 +219,14 @@ export namespace Archive {
             this.name = name;
             this.content = content;
         }
+
+        toXmlElement(): Element {
+            return new Element(
+                'options',
+                this.name ? { name: this.name } : {},
+                this.content.map((option) => option.toXmlElement()),
+            );
+        }
     }
 
     export class Option {
@@ -145,13 +235,26 @@ export namespace Archive {
         content: FrameArchive;
 
         constructor(
-            isKey: boolean = false,
-            priority: number = 0,
             content: FrameArchive,
+            args?: {
+                isKey?: boolean;
+                priority?: number;
+            },
         ) {
-            this.isKey = isKey;
-            this.priority = priority;
+            this.isKey = args?.isKey ?? false;
+            this.priority = args?.priority ?? 0;
             this.content = content;
+        }
+
+        toXmlElement(): Element {
+            return new Element(
+                'item',
+                {
+                    priority: this.priority.toString(),
+                    ...(this.isKey ? { key: 'true' } : {}),
+                },
+                [this.content.toXmlElement()],
+            );
         }
     }
 }
@@ -169,20 +272,30 @@ export class DimensionArchive {
         this.name = name;
         this.intensity = intensity;
     }
+
+    toXmlElement() {
+        return new Element('dimension', { name: this.name }, [
+            new XmlText(this.intensity.toString()),
+        ]);
+    }
 }
 
 export class ArchiveParseError extends Error {
     location: string[];
-    cause: Error | null
+    cause: Error | null;
 
-    constructor(message: string, cause: Error | null = null, ...location: any[]) {
+    constructor(
+        message: string,
+        cause: Error | null = null,
+        ...location: any[]
+    ) {
         location = location.map((e) => e.toString());
         if (location.length > 0) {
             super(`${message} at ${location.join('/')}`);
         } else {
             super(message);
         }
-        this.cause = cause
+        this.cause = cause;
         this.location = location;
         this.name = 'ArchiveParseError';
     }

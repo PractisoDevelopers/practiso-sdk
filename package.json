@@ -16,7 +16,11 @@
     "clean": "del-cli ./lib",
     "test": "vitest"
   },
-  "keywords": ["Practiso", "parser", "data manipulation"],
+  "keywords": [
+    "Practiso",
+    "parser",
+    "data manipulation"
+  ],
   "repository": "https://github.com/PractisoDevelopers/practiso-sdk",
   "author": "Practiso Developers",
   "license": "Apache-2.0",
@@ -31,6 +35,7 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
+    "dom-serializer": "^2.0.0",
     "domhandler": "^5.0.3",
     "htmlparser2": "^10.0.0"
   }

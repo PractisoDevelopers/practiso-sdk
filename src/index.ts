@@ -17,6 +17,7 @@ import DomHandler, {
     isText,
 } from 'domhandler';
 import { Parser as XmlParser } from 'htmlparser2';
+import render from 'dom-serializer';
 
 function allowElementOrEmptyText(value: ChildNode[]): Element[] {
     const elements = [];
@@ -70,7 +71,9 @@ export class Parser {
                         const terminatorIndex = buffer.indexOf(0);
                         if (terminatorIndex >= 0) {
                             this.xmlParts.push(blob.slice(0, terminatorIndex));
-                            this.resourceParts.push(blob.slice(terminatorIndex + 1))
+                            this.resourceParts.push(
+                                blob.slice(terminatorIndex + 1),
+                            );
                             readHead = 'resource';
                         } else {
                             this.xmlParts.push(blob);
@@ -85,20 +88,20 @@ export class Parser {
     }
 
     async result() {
-        const xmlContent = await new Blob(this.xmlParts).text()
+        const xmlContent = await new Blob(this.xmlParts).text();
 
         const domHandler = new DomHandler();
         const xml = new XmlParser(domHandler);
         xml.write(xmlContent);
 
-        const archive = parseXmlObj(domHandler.root);
+        const archive = parseXmlArchive(domHandler.root);
         archive.resources = await parseResources(new Blob(this.resourceParts));
 
-        return archive
+        return archive;
     }
 }
 
-function parseXmlObj(xmlDoc: Document): PractisoArchive {
+export function parseXmlArchive(xmlDoc: Document): PractisoArchive {
     const archive = allowElementOrEmptyText(
         xmlDoc.children.filter((n) => !isDirective(n)),
     )[0];
@@ -229,16 +232,17 @@ function parseXmlObj(xmlDoc: Document): PractisoArchive {
                     throw e;
                 }
             });
-            return new QuizArchive(
-                name,
-                new Date(quizCreationStr),
-                quizModificationStr ? new Date(quizModificationStr) : undefined,
+            return new QuizArchive(name, {
+                creationTime: new Date(quizCreationStr),
+                modificationTime: quizModificationStr
+                    ? new Date(quizModificationStr)
+                    : undefined,
                 frames,
                 dimensions,
-            );
+            });
         })
         .filter((quiz) => typeof quiz !== 'undefined');
-    return new PractisoArchive(new Date(creation), quizzes);
+    return new PractisoArchive(quizzes, { creationTime: new Date(creation) });
 }
 
 async function parseResources(blob: Blob): Promise<ResourceArchive> {
@@ -261,7 +265,7 @@ async function parseResources(blob: Blob): Promise<ResourceArchive> {
     return new ResourceArchive(resMap);
 }
 
-function parseXmlFrame(xmlEle: Element): FrameArchive {
+export function parseXmlFrame(xmlEle: Element): FrameArchive {
     switch (xmlEle.tagName) {
         case magic.textFrameSerialName:
             if (!xmlEle.children) {
@@ -361,7 +365,7 @@ function parseXmlFrame(xmlEle: Element): FrameArchive {
                     }
                     throw e;
                 }
-                return new Archive.Option(isKey, priority, innerFrame);
+                return new Archive.Option(innerFrame, { isKey, priority });
             });
             const name = xmlEle.attribs['name'];
             return new Archive.Options(name, items);
@@ -397,6 +401,43 @@ function parseXmlDimension(xmlEle: Element): DimensionArchive {
             throw new ArchiveParseError(e.message, e);
         }
         throw e;
+    }
+}
+
+export class Composer {
+    archive: PractisoArchive;
+
+    constructor(archive: PractisoArchive) {
+        this.archive = archive;
+    }
+
+    get source() {
+        return new ReadableStream({
+            start: async (controller) => {
+                const xml = render(this.archive.toXmlElement(), {
+                    encodeEntities: true,
+                    selfClosingTags: false,
+                });
+                const textEncoder = new TextEncoder();
+                controller.enqueue(textEncoder.encode(xml));
+                if (this.archive.resources.size > 0) {
+                    controller.enqueue(new Uint8Array([0]));
+                    for await (const [name, content] of this.archive.resources) {
+                        controller.enqueue(textEncoder.encode(name));
+                        controller.enqueue(new Uint8Array([0]))
+                        const sizeMarker = new Uint8Array(4);
+                        new DataView(sizeMarker.buffer).setInt32(
+                            0,
+                            content.size,
+                            false,
+                        );
+                        controller.enqueue(sizeMarker)
+                        controller.enqueue(await content.bytes());
+                    }
+                }
+                controller.close();
+            },
+        });
     }
 }
 
